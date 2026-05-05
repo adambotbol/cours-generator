@@ -1,2 +1,3 @@
-# cours-generator
-Script d'automatisation pour générer des sites web de cours depuis un PDF
+# Cours Generator 🎓
+
+Script d'automatisation pour générer des sites web de cours depuis un PDF.
