@@ -14,8 +14,8 @@ import fitz
 
 GENERATION_TIMEOUT_MIN = 60
 POLL_INTERVAL_SEC = 30
-ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
-HTML_MAX_TOKENS = 8000
+ANTHROPIC_MODEL = "claude-sonnet-4-6"
+HTML_MAX_TOKENS = 16000
 
 SYSTEM_PROMPT = r"""
 Tu es un expert en création de sites web pédagogiques.
@@ -165,6 +165,24 @@ def extract_pdf_text(pdf_path: Path) -> str:
         doc.close()
 
 
+def split_pdf(pdf_path: Path, output_dir: Path, chapter_name: str) -> int:
+    """Découpe le PDF page par page en {chapter_name}_presentation_page{N}.pdf.
+
+    Retourne le nombre de pages générées.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    src = fitz.open(pdf_path)
+    try:
+        for i in range(len(src)):
+            page_doc = fitz.open()
+            page_doc.insert_pdf(src, from_page=i, to_page=i)
+            page_doc.save(output_dir / f"{chapter_name}_presentation_page{i + 1}.pdf")
+            page_doc.close()
+        return len(src)
+    finally:
+        src.close()
+
+
 def generate_html(pdf_text: str, chapter_name: str, titre: str, matiere: str) -> str:
     """Appelle Claude pour générer le site HTML complet en un seul fichier."""
     client = anthropic.Anthropic()
@@ -240,23 +258,28 @@ def main() -> int:
     title = args.title or chapter_name
     args.output_dir.mkdir(parents=True, exist_ok=True)
     audio_file = args.output_dir / f"{chapter_name}_podcast.m4a"
-    slides_file = args.output_dir / "Presentation" / f"{chapter_name}_presentation_page1.pdf"
+    slides_dir = args.output_dir / "Presentation"
+    slides_source = slides_dir / f"{chapter_name}_presentation.pdf"
 
     if not args.skip_generation:
         notebooklm_setup(args.pdf, title)
         ok_audio = generate_and_download(
             "audio", audio_file, prompt=f"Podcast pédagogique sur : {title}"
         )
-        ok_slides = generate_and_download("slide-deck", slides_file)
+        ok_slides = generate_and_download("slide-deck", slides_source)
         if not (ok_audio and ok_slides):
             return 2
     else:
         print("⏭️  Étape NotebookLM sautée.")
-        for f in (audio_file, slides_file):
+        for f in (audio_file, slides_source):
             if not f.exists():
                 print(f"❌ Fichier manquant : {f}", file=sys.stderr)
                 print(f"   Télécharge-le manuellement puis relance.", file=sys.stderr)
                 return 1
+
+    print("✂️  Découpage de la présentation par page...")
+    n_pages = split_pdf(slides_source, slides_dir, chapter_name)
+    print(f"   {n_pages} pages → {slides_dir}/")
 
     build_site(args.output_dir, args.pdf, chapter_name, title, args.matiere)
 
