@@ -2,19 +2,23 @@
 """Génère un site de cours depuis un PDF via NotebookLM + Claude."""
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-import anthropic
 import fitz
+import google.generativeai as genai
+from dotenv import load_dotenv
 
+
+load_dotenv()
 
 GENERATION_TIMEOUT_MIN = 60
 POLL_INTERVAL_SEC = 30
-ANTHROPIC_MODEL = "claude-sonnet-4-6"
+GEMINI_MODEL = "gemini-2.0-flash"
 HTML_MAX_TOKENS = 16000
 
 SYSTEM_PROMPT = r"""
@@ -58,11 +62,9 @@ SECTIONS OBLIGATOIRES :
    - 4 boutons : Support PDF, Présentation, Podcast, Quiz
 
 4. Dashboard (id="mainDashboard") :
-   - Tile Support de Cours → onclick="initViewer('pdf', 10)"
-   - Tile Présentation → onclick="initViewer('presentation', 10)"
-   - Tile Podcast → onclick="openPage('p-audio')"
-   - Tile Quiz → onclick="openPage('p-quiz')"
-   - Une tile par section du cours détectée dans le texte
+   - UNIQUEMENT une tile par section du cours détectée dans le texte
+   - NE PAS créer de tiles pour Support PDF / Présentation / Podcast / Quiz
+     (ces accès sont déjà dans la Quick Access bar — ne pas dupliquer en cartes)
 
 5. Pages de contenu (id="p1", "p2", etc.) :
    - display:none par défaut
@@ -184,24 +186,25 @@ def split_pdf(pdf_path: Path, output_dir: Path, chapter_name: str) -> int:
 
 
 def generate_html(pdf_text: str, chapter_name: str, titre: str, matiere: str) -> str:
-    """Appelle Claude pour générer le site HTML complet en un seul fichier."""
-    client = anthropic.Anthropic()
+    """Appelle Gemini pour générer le site HTML complet en un seul fichier."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY introuvable. Crée un fichier .env avec GEMINI_API_KEY=..."
+        )
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(
+        model_name=GEMINI_MODEL,
+        system_instruction=SYSTEM_PROMPT,
+    )
     user_prompt = (
         f"Titre: {titre} | Matière: {matiere} | Fichier: {chapter_name}\n{pdf_text}"
     )
-    response = client.messages.create(
-        model=ANTHROPIC_MODEL,
-        max_tokens=HTML_MAX_TOKENS,
-        system=[
-            {
-                "type": "text",
-                "text": SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[{"role": "user", "content": user_prompt}],
+    response = model.generate_content(
+        user_prompt,
+        generation_config={"max_output_tokens": HTML_MAX_TOKENS},
     )
-    return next(b.text for b in response.content if b.type == "text")
+    return response.text
 
 
 def build_site(
