@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Génère un site de cours depuis un PDF via NotebookLM + Claude."""
+"""Génère un site de cours depuis un PDF via NotebookLM + Gemini."""
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import fitz
@@ -16,8 +16,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GENERATION_TIMEOUT_MIN = 60
-POLL_INTERVAL_SEC = 30
+# Chemin du binaire notebooklm-py installé dans le même env Python que le script
+NOTEBOOKLM_BIN = str(Path(sys.executable).parent / "notebooklm")
 GEMINI_MODEL = "gemini-2.0-flash"
 HTML_MAX_TOKENS = 16000
 
@@ -109,53 +109,63 @@ Réponds UNIQUEMENT avec le HTML complet, aucun texte avant ou après.
 """
 
 
-def run(cmd: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, check=True, text=True)
+def run(cmd: list[str], capture: bool = False) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, check=True, text=True, capture_output=capture)
 
 
-def notebooklm_setup(pdf_path: Path, title: str) -> None:
+def notebooklm_create(title: str) -> str:
+    """Crée un notebook et retourne son ID via la sortie JSON."""
     print(f"📚 Création du notebook « {title} »...")
-    run(["notebooklm", "create", title])
-    print(f"📎 Ajout du PDF : {pdf_path.name}")
-    run(["notebooklm", "source", "add", str(pdf_path)])
+    result = run([NOTEBOOKLM_BIN, "create", title, "--json"], capture=True)
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise RuntimeError(
+            f"Sortie JSON inattendue de `notebooklm create`:\n{result.stdout}"
+        )
+    for key in ("id", "notebook_id", "notebookId"):
+        value = data.get(key) if isinstance(data, dict) else None
+        if isinstance(value, str) and value:
+            print(f"   notebook_id = {value}")
+            return value
+    raise RuntimeError(f"ID notebook introuvable dans la réponse: {data}")
 
 
-def generate_and_download(kind: str, output: Path, prompt: str | None = None) -> bool:
-    """Lance la génération NotebookLM puis poll le download jusqu'à succès.
+def notebooklm_add_source(notebook_id: str, pdf_path: Path) -> None:
+    """Ajoute le PDF comme source du notebook."""
+    print(f"📎 Ajout de la source : {pdf_path.name}")
+    run([
+        NOTEBOOKLM_BIN, "source", "add", str(pdf_path),
+        "-n", notebook_id, "--type", "file",
+    ])
 
-    Polling: tente `notebooklm download` toutes les 30 s. Code retour 0
-    + fichier non-vide → prêt. Sinon on attend. Timeout 60 min.
+
+def notebooklm_artifact(
+    kind: str,
+    notebook_id: str,
+    output: Path,
+    description: str | None = None,
+) -> None:
+    """Génère puis télécharge un artifact NotebookLM (audio ou slide-deck).
+
+    Utilise `--wait` natif de la CLI : la commande bloque jusqu'à fin de
+    génération (5–45 min selon le type). `--retry 3` gère le throttling.
     """
     output.parent.mkdir(parents=True, exist_ok=True)
-    print(f"⏳ Lancement de la génération {kind}...")
-    cmd = ["notebooklm", "generate", kind]
-    if prompt:
-        cmd.append(prompt)
-    run(cmd)
-
-    print(f"⏳ Polling du téléchargement {kind} (timeout {GENERATION_TIMEOUT_MIN} min)...")
-    start = time.time()
-    while True:
-        elapsed_min = int((time.time() - start) / 60)
-        print(f"\r⏳ {kind}: {elapsed_min} min écoulées... ", end="", flush=True)
-
-        result = subprocess.run(
-            ["notebooklm", "download", kind, "--output", str(output)],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0 and output.exists() and output.stat().st_size > 0:
-            print(f"\n✅ {kind} prêt en {elapsed_min} min → {output}")
-            return True
-
-        if elapsed_min >= GENERATION_TIMEOUT_MIN:
-            print(f"\n⚠️  Timeout après {GENERATION_TIMEOUT_MIN} min pour {kind}.")
-            print(f"   Le fichier est peut-être quand même disponible.")
-            print(f"   Vérifie sur https://notebooklm.google.com, télécharge manuellement vers")
-            print(f"   {output}, puis relance avec --skip-generation.")
-            return False
-
-        time.sleep(POLL_INTERVAL_SEC)
+    print(f"⏳ Génération {kind} en cours (--wait, peut prendre 5–45 min)...")
+    gen_cmd = [
+        NOTEBOOKLM_BIN, "generate", kind, "-n", notebook_id,
+        "--wait", "--retry", "3",
+    ]
+    if description:
+        gen_cmd.append(description)
+    run(gen_cmd)
+    print(f"⬇️  Téléchargement {kind} → {output}")
+    run([
+        NOTEBOOKLM_BIN, "download", kind, str(output),
+        "-n", notebook_id, "--force",
+    ])
+    print(f"✅ {kind} prêt → {output}")
 
 
 def extract_pdf_text(pdf_path: Path) -> str:
@@ -265,12 +275,23 @@ def main() -> int:
     slides_source = slides_dir / f"{chapter_name}_presentation.pdf"
 
     if not args.skip_generation:
-        notebooklm_setup(args.pdf, title)
-        ok_audio = generate_and_download(
-            "audio", audio_file, prompt=f"Podcast pédagogique sur : {title}"
-        )
-        ok_slides = generate_and_download("slide-deck", slides_source)
-        if not (ok_audio and ok_slides):
+        try:
+            notebook_id = notebooklm_create(title)
+            notebooklm_add_source(notebook_id, args.pdf)
+            notebooklm_artifact(
+                "audio", notebook_id, audio_file,
+                description=f"Podcast pédagogique sur : {title}",
+            )
+            notebooklm_artifact("slide-deck", notebook_id, slides_source)
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Échec NotebookLM (commande {e.cmd}, code {e.returncode}).",
+                  file=sys.stderr)
+            print(f"   Génère manuellement sur https://notebooklm.google.com,",
+                  file=sys.stderr)
+            print(f"   place les fichiers ici :", file=sys.stderr)
+            print(f"     {audio_file}", file=sys.stderr)
+            print(f"     {slides_source}", file=sys.stderr)
+            print(f"   puis relance avec --skip-generation.", file=sys.stderr)
             return 2
 
     if args.html_only:
@@ -281,7 +302,10 @@ def main() -> int:
             for f in (audio_file, slides_source):
                 if not f.exists():
                     print(f"❌ Fichier manquant : {f}", file=sys.stderr)
-                    print(f"   Télécharge-le manuellement puis relance.", file=sys.stderr)
+                    print(f"   Génère manuellement sur https://notebooklm.google.com",
+                          file=sys.stderr)
+                    print(f"   puis place les fichiers ici : {args.output_dir}",
+                          file=sys.stderr)
                     return 1
 
         print("✂️  Découpage de la présentation par page...")
