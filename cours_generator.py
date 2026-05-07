@@ -219,7 +219,7 @@ def build_site(
         shutil.copy(pdf_path, cours_copy)
         print(f"📄 PDF source copié → {cours_copy.name}")
 
-    print(f"🌐 Génération du HTML via {ANTHROPIC_MODEL}...")
+    print(f"🌐 Génération du HTML via {GEMINI_MODEL}...")
     html = generate_html(pdf_text, chapter_name, titre, matiere)
     index = output_dir / "index.html"
     index.write_text(html, encoding="utf-8")
@@ -272,17 +272,21 @@ def main() -> int:
         ok_slides = generate_and_download("slide-deck", slides_source)
         if not (ok_audio and ok_slides):
             return 2
-    else:
-        print("⏭️  Étape NotebookLM sautée.")
-        for f in (audio_file, slides_source):
-            if not f.exists():
-                print(f"❌ Fichier manquant : {f}", file=sys.stderr)
-                print(f"   Télécharge-le manuellement puis relance.", file=sys.stderr)
-                return 1
 
-    print("✂️  Découpage de la présentation par page...")
-    n_pages = split_pdf(slides_source, slides_dir, chapter_name)
-    print(f"   {n_pages} pages → {slides_dir}/")
+    if args.html_only:
+        print("⏭️  Mode --html-only : NotebookLM, vérifs fichiers et split sautés.")
+    else:
+        if args.skip_generation:
+            print("⏭️  Étape NotebookLM sautée.")
+            for f in (audio_file, slides_source):
+                if not f.exists():
+                    print(f"❌ Fichier manquant : {f}", file=sys.stderr)
+                    print(f"   Télécharge-le manuellement puis relance.", file=sys.stderr)
+                    return 1
+
+        print("✂️  Découpage de la présentation par page...")
+        n_pages = split_pdf(slides_source, slides_dir, chapter_name)
+        print(f"   {n_pages} pages → {slides_dir}/")
 
     build_site(args.output_dir, args.pdf, chapter_name, title, args.matiere)
 
