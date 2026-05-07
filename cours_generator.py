@@ -10,8 +10,9 @@ import sys
 from pathlib import Path
 
 import fitz
-import google.generativeai as genai
 from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 
 
 load_dotenv()
@@ -196,23 +197,23 @@ def split_pdf(pdf_path: Path, output_dir: Path, chapter_name: str) -> int:
 
 
 def generate_html(pdf_text: str, chapter_name: str, titre: str, matiere: str) -> str:
-    """Appelle Gemini pour générer le site HTML complet en un seul fichier."""
+    """Appelle Gemini (SDK google-genai) pour générer le site HTML complet."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError(
             "GEMINI_API_KEY introuvable. Crée un fichier .env avec GEMINI_API_KEY=..."
         )
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        model_name=GEMINI_MODEL,
-        system_instruction=SYSTEM_PROMPT,
-    )
+    client = genai.Client(api_key=api_key)
     user_prompt = (
         f"Titre: {titre} | Matière: {matiere} | Fichier: {chapter_name}\n{pdf_text}"
     )
-    response = model.generate_content(
-        user_prompt,
-        generation_config={"max_output_tokens": HTML_MAX_TOKENS},
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=user_prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            max_output_tokens=HTML_MAX_TOKENS,
+        ),
     )
     return response.text
 
