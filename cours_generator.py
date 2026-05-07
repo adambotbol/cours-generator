@@ -115,7 +115,10 @@ def run(cmd: list[str], capture: bool = False) -> subprocess.CompletedProcess:
 
 
 def notebooklm_create(title: str) -> str:
-    """Crée un notebook et retourne son ID via la sortie JSON."""
+    """Crée un notebook et retourne son ID.
+
+    La CLI renvoie en JSON: {"notebook": {"id": "...", "title": "...", ...}}.
+    """
     print(f"📚 Création du notebook « {title} »...")
     result = run([NOTEBOOKLM_BIN, "create", title, "--json"], capture=True)
     try:
@@ -124,11 +127,11 @@ def notebooklm_create(title: str) -> str:
         raise RuntimeError(
             f"Sortie JSON inattendue de `notebooklm create`:\n{result.stdout}"
         )
-    for key in ("id", "notebook_id", "notebookId"):
-        value = data.get(key) if isinstance(data, dict) else None
-        if isinstance(value, str) and value:
-            print(f"   notebook_id = {value}")
-            return value
+    notebook = data.get("notebook") if isinstance(data, dict) else None
+    nb_id = notebook.get("id") if isinstance(notebook, dict) else None
+    if isinstance(nb_id, str) and nb_id:
+        print(f"   notebook_id = {nb_id}")
+        return nb_id
     raise RuntimeError(f"ID notebook introuvable dans la réponse: {data}")
 
 
