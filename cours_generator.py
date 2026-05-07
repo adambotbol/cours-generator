@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import fitz
@@ -144,32 +145,97 @@ def notebooklm_add_source(notebook_id: str, pdf_path: Path) -> None:
     ])
 
 
-def notebooklm_artifact(
-    kind: str,
-    notebook_id: str,
-    output: Path,
-    description: str | None = None,
-) -> None:
-    """Génère puis télécharge un artifact NotebookLM (audio ou slide-deck).
+def _extract_artifact_id(data, kind: str) -> str:
+    """Extrait l'ID d'artifact depuis la réponse JSON de `generate`.
 
-    Utilise `--wait` natif de la CLI : la commande bloque jusqu'à fin de
-    génération (5–45 min selon le type). `--retry 3` gère le throttling.
+    Tente plusieurs formes plausibles : {'artifact': {'id': ...}},
+    {'<kind>': {'id': ...}}, ou {'id': ...} top-level.
     """
-    output.parent.mkdir(parents=True, exist_ok=True)
-    print(f"⏳ Génération {kind} en cours (--wait, peut prendre 5–45 min)...")
-    gen_cmd = [
+    if isinstance(data, dict):
+        candidate_keys = ("artifact", kind, kind.replace("-", "_"))
+        for key in candidate_keys:
+            wrapper = data.get(key)
+            if isinstance(wrapper, dict):
+                wid = wrapper.get("id")
+                if isinstance(wid, str) and wid:
+                    return wid
+        top = data.get("id")
+        if isinstance(top, str) and top:
+            return top
+    raise RuntimeError(f"Artifact ID introuvable dans `generate {kind}`: {data}")
+
+
+def notebooklm_generate_async(
+    kind: str, notebook_id: str, description: str | None = None
+) -> str:
+    """Lance `generate <kind>` en mode no-wait, retourne l'artifact_id."""
+    print(f"🎬 Lancement génération {kind}...")
+    cmd = [
         NOTEBOOKLM_BIN, "generate", kind, "-n", notebook_id,
-        "--wait", "--retry", "3",
+        "--json", "--retry", "3",
     ]
     if description:
-        gen_cmd.append(description)
-    run(gen_cmd)
+        cmd.append(description)
+    result = run(cmd, capture=True)
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise RuntimeError(
+            f"Sortie JSON inattendue de `notebooklm generate {kind}`:\n{result.stdout}"
+        )
+    art_id = _extract_artifact_id(data, kind)
+    print(f"   {kind} → artifact_id = {art_id}")
+    return art_id
+
+
+def notebooklm_artifact_wait(artifact_id: str, notebook_id: str, label: str) -> None:
+    """Bloque jusqu'à ce que l'artifact soit prêt (timeout 1h)."""
+    print(f"⏳ Wait {label} (id={artifact_id[:8]}…)")
+    run([
+        NOTEBOOKLM_BIN, "artifact", "wait", artifact_id,
+        "-n", notebook_id, "--timeout", "3600",
+    ])
+    print(f"✅ {label} prêt")
+
+
+def notebooklm_download(kind: str, notebook_id: str, output: Path) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
     print(f"⬇️  Téléchargement {kind} → {output}")
     run([
         NOTEBOOKLM_BIN, "download", kind, str(output),
         "-n", notebook_id, "--force",
     ])
-    print(f"✅ {kind} prêt → {output}")
+
+
+def notebooklm_generate_audio_and_slides(
+    notebook_id: str,
+    audio_output: Path,
+    slides_output: Path,
+    audio_description: str | None = None,
+) -> None:
+    """Lance audio + slide-deck en parallèle.
+
+    Étape 1 : `generate` no-wait pour les deux (séquentiel, calls < 1 s).
+    Étape 2 : `artifact wait` en parallèle dans 2 threads → temps total
+              ≈ max(audio, slides) au lieu de audio + slides.
+    Étape 3 : download des deux artifacts.
+    """
+    print("🚀 Pipeline parallèle audio + slide-deck")
+    audio_id = notebooklm_generate_async("audio", notebook_id, audio_description)
+    slides_id = notebooklm_generate_async("slide-deck", notebook_id)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {
+            executor.submit(notebooklm_artifact_wait, audio_id, notebook_id, "audio"):
+                "audio",
+            executor.submit(notebooklm_artifact_wait, slides_id, notebook_id, "slide-deck"):
+                "slide-deck",
+        }
+        for future in as_completed(futures):
+            future.result()  # propage la première exception levée
+
+    notebooklm_download("audio", notebook_id, audio_output)
+    notebooklm_download("slide-deck", notebook_id, slides_output)
 
 
 def extract_pdf_text(pdf_path: Path) -> str:
@@ -282,11 +348,10 @@ def main() -> int:
         try:
             notebook_id = notebooklm_create(title)
             notebooklm_add_source(notebook_id, args.pdf)
-            notebooklm_artifact(
-                "audio", notebook_id, audio_file,
-                description=f"Podcast pédagogique sur : {title}",
+            notebooklm_generate_audio_and_slides(
+                notebook_id, audio_file, slides_source,
+                audio_description=f"Podcast pédagogique sur : {title}",
             )
-            notebooklm_artifact("slide-deck", notebook_id, slides_source)
         except subprocess.CalledProcessError as e:
             print(f"❌ Échec NotebookLM (commande {e.cmd}, code {e.returncode}).",
                   file=sys.stderr)
