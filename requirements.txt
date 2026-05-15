@@ -1,3 +1,4 @@
+flask
 google-genai
 notebooklm-py
 pymupdf

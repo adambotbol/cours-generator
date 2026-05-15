@@ -148,15 +148,21 @@ def notebooklm_add_source(notebook_id: str, pdf_path: Path) -> None:
 def _extract_artifact_id(data, kind: str) -> str:
     """Extrait l'ID d'artifact depuis la réponse JSON de `generate`.
 
-    Tente plusieurs formes plausibles : {'artifact': {'id': ...}},
-    {'<kind>': {'id': ...}}, ou {'id': ...} top-level.
+    Forme observée : {"task_id": "<uuid>", "status": "pending"}.
+    `task_id` == `artifact_id` (vérifié via `artifact list`/`poll` qui
+    acceptent indifféremment l'un ou l'autre).
+    Fallback défensif sur d'autres formes possibles.
     """
     if isinstance(data, dict):
-        candidate_keys = ("artifact", kind, kind.replace("-", "_"))
-        for key in candidate_keys:
+        # Forme principale : task_id top-level
+        task_id = data.get("task_id")
+        if isinstance(task_id, str) and task_id:
+            return task_id
+        # Fallbacks défensifs
+        for key in ("artifact", kind, kind.replace("-", "_")):
             wrapper = data.get(key)
             if isinstance(wrapper, dict):
-                wid = wrapper.get("id")
+                wid = wrapper.get("id") or wrapper.get("task_id")
                 if isinstance(wid, str) and wid:
                     return wid
         top = data.get("id")
@@ -212,14 +218,26 @@ def notebooklm_generate_audio_and_slides(
     audio_output: Path,
     slides_output: Path,
     audio_description: str | None = None,
+    skip_audio: bool = False,
 ) -> None:
-    """Lance audio + slide-deck en parallèle.
+    """Lance audio + slide-deck en parallèle (ou slide-deck seul si skip_audio).
 
-    Étape 1 : `generate` no-wait pour les deux (séquentiel, calls < 1 s).
-    Étape 2 : `artifact wait` en parallèle dans 2 threads → temps total
-              ≈ max(audio, slides) au lieu de audio + slides.
-    Étape 3 : download des deux artifacts.
+    Sans skip_audio :
+      Étape 1 : `generate` no-wait pour les deux (séquentiel, calls < 1 s).
+      Étape 2 : `artifact wait` en parallèle dans 2 threads → temps total
+                ≈ max(audio, slides) au lieu de audio + slides.
+      Étape 3 : download des deux artifacts.
+    Avec skip_audio :
+      Pipeline slide-deck uniquement (utile quand l'audio est rate-limité
+      par Google côté compte, ce qui arrive vite sur le tier gratuit).
     """
+    if skip_audio:
+        print("🚀 Pipeline slide-deck (audio sauté via --skip-audio)")
+        slides_id = notebooklm_generate_async("slide-deck", notebook_id)
+        notebooklm_artifact_wait(slides_id, notebook_id, "slide-deck")
+        notebooklm_download("slide-deck", notebook_id, slides_output)
+        return
+
     print("🚀 Pipeline parallèle audio + slide-deck")
     audio_id = notebooklm_generate_async("audio", notebook_id, audio_description)
     slides_id = notebooklm_generate_async("slide-deck", notebook_id)
@@ -323,6 +341,9 @@ def main() -> int:
                         help="Dossier de sortie (défaut : ./output)")
     parser.add_argument("--skip-generation", action="store_true",
                         help="Saute l'étape NotebookLM (fichiers déjà présents)")
+    parser.add_argument("--skip-audio", action="store_true",
+                        help="Génère uniquement le slide-deck (utile si l'audio "
+                             "est rate-limité Google)")
     parser.add_argument("--skip-push", action="store_true",
                         help="Saute le git push")
     parser.add_argument("--html-only", action="store_true",
@@ -351,6 +372,7 @@ def main() -> int:
             notebooklm_generate_audio_and_slides(
                 notebook_id, audio_file, slides_source,
                 audio_description=f"Podcast pédagogique sur : {title}",
+                skip_audio=args.skip_audio,
             )
         except subprocess.CalledProcessError as e:
             print(f"❌ Échec NotebookLM (commande {e.cmd}, code {e.returncode}).",
@@ -368,7 +390,10 @@ def main() -> int:
     else:
         if args.skip_generation:
             print("⏭️  Étape NotebookLM sautée.")
-            for f in (audio_file, slides_source):
+            required = [slides_source]
+            if not args.skip_audio:
+                required.append(audio_file)
+            for f in required:
                 if not f.exists():
                     print(f"❌ Fichier manquant : {f}", file=sys.stderr)
                     print(f"   Génère manuellement sur https://notebooklm.google.com",

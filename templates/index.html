@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cours Generator</title>
+<style>
+  :root {
+    --bg: #f5f5f7;
+    --card: rgba(255,255,255,0.82);
+    --border: rgba(0,0,0,0.08);
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --accent: #0071e3;
+    --accent-h: #0077ed;
+    --radius: 20px;
+    --shadow: 0 20px 60px rgba(0,0,0,0.10);
+  }
+  [data-theme="dark"] {
+    --bg: #000;
+    --card: rgba(30,30,32,0.85);
+    --border: rgba(255,255,255,0.10);
+    --text: #f5f5f7;
+    --muted: #98989d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .blobs {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  }
+  .blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(120px);
+    opacity: 0.35;
+    animation: drift 18s ease-in-out infinite alternate;
+  }
+  .blob-1 { width: 520px; height: 520px; background: #5e5ce6; top: -120px; left: -100px; animation-delay: 0s; }
+  .blob-2 { width: 440px; height: 440px; background: #30d158; bottom: -100px; right: -80px; animation-delay: -9s; }
+  @keyframes drift {
+    from { transform: translate(0,0) scale(1); }
+    to   { transform: translate(60px, 40px) scale(1.08); }
+  }
+  nav {
+    position: fixed; top: 0; left: 0; right: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 32px;
+    height: 56px;
+    background: rgba(255,255,255,0.72);
+    backdrop-filter: blur(30px) saturate(180%);
+    border-bottom: 1px solid var(--border);
+    z-index: 100;
+  }
+  [data-theme="dark"] nav { background: rgba(18,18,20,0.72); }
+  .nav-logo { font-weight: 700; font-size: 1rem; letter-spacing: -0.02em; }
+  .nav-logo span { color: var(--accent); }
+  .theme-btn {
+    background: none; border: 1px solid var(--border); border-radius: 50%;
+    width: 32px; height: 32px; cursor: pointer; font-size: 16px;
+    color: var(--text); display: flex; align-items: center; justify-content: center;
+  }
+  .card {
+    position: relative; z-index: 1;
+    background: var(--card);
+    border: 1px solid rgba(255,255,255,0.50);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(30px) saturate(160%);
+    padding: 48px 48px 40px;
+    max-width: 560px;
+    width: calc(100vw - 48px);
+    margin-top: 56px;
+  }
+  h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.04em; margin-bottom: 6px; }
+  .subtitle { color: var(--muted); font-size: 0.95rem; margin-bottom: 36px; }
+  label { display: block; font-size: 0.82rem; font-weight: 600; color: var(--muted);
+          text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  input[type="text"],
+  input[type="file"],
+  select {
+    width: 100%;
+    background: rgba(0,0,0,0.04);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 0.95rem;
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.2s;
+    margin-bottom: 20px;
+  }
+  [data-theme="dark"] input, [data-theme="dark"] select { background: rgba(255,255,255,0.06); }
+  input:focus, select:focus { border-color: var(--accent); }
+  .drop-zone {
+    border: 2px dashed rgba(0,113,227,0.35);
+    border-radius: 16px;
+    padding: 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    margin-bottom: 20px;
+    position: relative;
+  }
+  .drop-zone.over { border-color: var(--accent); background: rgba(0,113,227,0.06); }
+  .drop-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; margin: 0; }
+  .drop-icon { font-size: 2rem; margin-bottom: 8px; }
+  .drop-text { font-size: 0.9rem; color: var(--muted); }
+  .drop-text b { color: var(--accent); }
+  #fileList { font-size: 0.82rem; color: var(--muted); margin-bottom: 16px; min-height: 18px; }
+  .row { display: flex; gap: 12px; }
+  .row > * { flex: 1; }
+  .toggle-row {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 28px;
+  }
+  .toggle-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
+  .toggle-row label { margin: 0; text-transform: none; font-size: 0.88rem; font-weight: 400; color: var(--text); }
+  button[type="submit"] {
+    width: 100%;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 14px;
+    padding: 15px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.1s;
+  }
+  button[type="submit"]:hover { background: var(--accent-h); }
+  button[type="submit"]:active { transform: scale(0.98); }
+</style>
+</head>
+<body>
+<div class="blobs">
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+</div>
+
+<nav>
+  <div class="nav-logo">cours<span>.</span>gen</div>
+  <button class="theme-btn" onclick="toggleTheme()" title="Thème">🌙</button>
+</nav>
+
+<div class="card">
+  <h1>Générer un cours</h1>
+  <p class="subtitle">Upload un ou plusieurs PDFs → NotebookLM → Site complet</p>
+
+  <form action="/upload" method="post" enctype="multipart/form-data" id="uploadForm">
+
+    <label>Fichiers PDF</label>
+    <div class="drop-zone" id="dropZone">
+      <div class="drop-icon">📄</div>
+      <div class="drop-text"><b>Clique ou glisse</b> tes PDFs ici</div>
+      <input type="file" name="pdfs" id="pdfInput" accept=".pdf" multiple>
+    </div>
+    <div id="fileList"></div>
+
+    <div class="row">
+      <div>
+        <label for="title">Titre du cours</label>
+        <input type="text" id="title" name="title" placeholder="ex : L'Énergie Électrique">
+      </div>
+      <div>
+        <label for="matiere">Matière</label>
+        <input type="text" id="matiere" name="matiere" placeholder="ex : Physique-Chimie">
+      </div>
+    </div>
+
+    <div class="toggle-row">
+      <input type="checkbox" name="skip_audio" id="skip_audio">
+      <label for="skip_audio">Sauter la génération audio (évite la rate-limit Google)</label>
+    </div>
+
+    <button type="submit" id="submitBtn">🚀&nbsp; Générer le cours</button>
+  </form>
+</div>
+
+<script>
+  // Drag-and-drop + file list
+  const input = document.getElementById('pdfInput');
+  const zone  = document.getElementById('dropZone');
+  const list  = document.getElementById('fileList');
+
+  function updateList(files) {
+    if (!files.length) { list.textContent = ''; return; }
+    list.textContent = Array.from(files).map(f => `📄 ${f.name}`).join('  •  ');
+  }
+  input.addEventListener('change', () => updateList(input.files));
+  zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('over');
+    const dt = new DataTransfer();
+    Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.pdf')).forEach(f => dt.items.add(f));
+    input.files = dt.files;
+    updateList(input.files);
+  });
+
+  // Form submit
+  document.getElementById('uploadForm').addEventListener('submit', () => {
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳  Upload en cours…';
+  });
+
+  // Theme
+  function toggleTheme() {
+    const dark = document.documentElement.dataset.theme === 'dark';
+    document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+  }
+</script>
+</body>
+</html>

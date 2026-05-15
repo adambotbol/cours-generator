@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Génération en cours…</title>
+<style>
+  :root {
+    --bg: #f5f5f7; --card: rgba(255,255,255,0.82); --border: rgba(0,0,0,0.08);
+    --text: #1d1d1f; --muted: #6e6e73; --accent: #0071e3;
+    --green: #30d158; --red: #ff3b30; --radius: 20px;
+    --shadow: 0 20px 60px rgba(0,0,0,0.10);
+  }
+  [data-theme="dark"] {
+    --bg: #000; --card: rgba(30,30,32,0.85); --border: rgba(255,255,255,0.10);
+    --text: #f5f5f7; --muted: #98989d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 24px; padding: 80px 24px 40px;
+  }
+  .blobs { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+  .blob { position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.30; animation: drift 18s ease-in-out infinite alternate; }
+  .blob-1 { width: 520px; height: 520px; background: #5e5ce6; top: -120px; left: -100px; }
+  .blob-2 { width: 440px; height: 440px; background: #30d158; bottom: -100px; right: -80px; animation-delay: -9s; }
+  @keyframes drift { from{transform:translate(0,0) scale(1)} to{transform:translate(60px,40px) scale(1.08)} }
+  nav {
+    position: fixed; top: 0; left: 0; right: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 32px; height: 56px;
+    background: rgba(255,255,255,0.72);
+    backdrop-filter: blur(30px) saturate(180%);
+    border-bottom: 1px solid var(--border); z-index: 100;
+  }
+  [data-theme="dark"] nav { background: rgba(18,18,20,0.72); }
+  .nav-logo { font-weight: 700; font-size: 1rem; }
+  .nav-logo span { color: var(--accent); }
+  .theme-btn { background: none; border: 1px solid var(--border); border-radius: 50%; width: 32px; height: 32px; cursor: pointer; font-size: 16px; color: var(--text); }
+
+  .card {
+    position: relative; z-index: 1;
+    background: var(--card);
+    border: 1px solid rgba(255,255,255,0.50);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(30px) saturate(160%);
+    padding: 40px 40px 32px;
+    max-width: 680px; width: 100%;
+  }
+  .card-header { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
+  .status-icon { font-size: 2rem; }
+  h2 { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.03em; }
+  .sub { color: var(--muted); font-size: 0.88rem; margin-top: 2px; }
+
+  /* Progress bar */
+  .progress-track {
+    background: rgba(0,0,0,0.07); border-radius: 8px; height: 6px; margin-bottom: 28px; overflow: hidden;
+  }
+  [data-theme="dark"] .progress-track { background: rgba(255,255,255,0.10); }
+  .progress-fill {
+    height: 100%; border-radius: 8px;
+    background: var(--accent);
+    width: 0%; transition: width 0.4s;
+    animation: pulse-bar 2s ease-in-out infinite;
+  }
+  .progress-fill.done  { background: var(--green); animation: none; width: 100% !important; }
+  .progress-fill.error { background: var(--red);   animation: none; }
+  @keyframes pulse-bar { 0%,100%{opacity:1} 50%{opacity:0.65} }
+
+  /* Log terminal */
+  .log-wrap {
+    background: rgba(0,0,0,0.04); border: 1px solid var(--border);
+    border-radius: 14px; padding: 16px 18px;
+    height: 280px; overflow-y: auto;
+    font-family: "SF Mono", "Fira Code", monospace; font-size: 0.78rem;
+    line-height: 1.6; color: var(--text);
+  }
+  [data-theme="dark"] .log-wrap { background: rgba(0,0,0,0.30); }
+  .log-line { white-space: pre-wrap; word-break: break-all; }
+  .log-line.err { color: var(--red); }
+
+  /* Action buttons */
+  .actions { display: flex; gap: 12px; margin-top: 24px; flex-wrap: wrap; }
+  .btn {
+    flex: 1; min-width: 140px;
+    padding: 13px 20px; border-radius: 14px; border: none;
+    font-size: 0.92rem; font-weight: 600; cursor: pointer; text-decoration: none;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    transition: opacity 0.2s, transform 0.1s;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-secondary { background: rgba(0,0,0,0.06); color: var(--text); border: 1px solid var(--border); }
+  [data-theme="dark"] .btn-secondary { background: rgba(255,255,255,0.08); }
+  .btn:disabled, .btn[disabled] { opacity: 0.4; pointer-events: none; }
+
+  .step-list { margin-bottom: 20px; }
+  .step { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.88rem; color: var(--muted); }
+  .step:last-child { border-bottom: none; }
+  .step.active { color: var(--text); font-weight: 600; }
+  .step.done-step { color: var(--green); }
+  .step-icon { width: 22px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="blobs"><div class="blob blob-1"></div><div class="blob blob-2"></div></div>
+
+<nav>
+  <div class="nav-logo">cours<span>.</span>gen</div>
+  <button class="theme-btn" onclick="toggleTheme()">🌙</button>
+</nav>
+
+<div class="card" id="mainCard">
+  <div class="card-header">
+    <div class="status-icon" id="statusIcon">⏳</div>
+    <div>
+      <h2 id="statusTitle">Génération en cours…</h2>
+      <div class="sub" id="statusSub">Notebook LM est en train de traiter vos fichiers</div>
+    </div>
+  </div>
+
+  <div class="progress-track"><div class="progress-fill" id="progressBar"></div></div>
+
+  <div class="step-list" id="stepList">
+    <div class="step" id="s-notebook"><span class="step-icon">📚</span> Création du notebook</div>
+    <div class="step" id="s-sources"><span class="step-icon">📎</span> Ajout des sources</div>
+    <div class="step" id="s-generate"><span class="step-icon">🎬</span> Lancement de la génération</div>
+    <div class="step" id="s-wait"><span class="step-icon">⏳</span> Attente des artifacts (20-30 min)</div>
+    <div class="step" id="s-download"><span class="step-icon">⬇️</span> Téléchargement</div>
+    <div class="step" id="s-html"><span class="step-icon">🌐</span> Génération du site HTML</div>
+    <div class="step" id="s-git"><span class="step-icon">🚀</span> Publication GitHub</div>
+  </div>
+
+  <details>
+    <summary style="cursor:pointer; font-size:0.82rem; color:var(--muted); margin-bottom:10px;">Voir les logs détaillés</summary>
+    <div class="log-wrap" id="logBox"></div>
+  </details>
+
+  <div class="actions">
+    <a href="/site/{{ job_id }}/" class="btn btn-primary" id="siteBtn" disabled>🌐&nbsp; Voir le site</a>
+    <a href="/" class="btn btn-secondary">← Nouveau cours</a>
+  </div>
+</div>
+
+<script>
+const JOB_ID = "{{ job_id }}";
+const logBox = document.getElementById('logBox');
+const bar    = document.getElementById('progressBar');
+const icon   = document.getElementById('statusIcon');
+const title  = document.getElementById('statusTitle');
+const sub    = document.getElementById('statusSub');
+const siteBtn = document.getElementById('siteBtn');
+
+const STEPS = {
+  'Création': 's-notebook',
+  'Ajout source': 's-sources',
+  'Lancement génération': 's-generate',
+  'Attente': 's-wait',
+  'Téléchargement': 's-download',
+  'Génération du site': 's-html',
+  'Push Git': 's-git',
+};
+let progress = 5;
+let activeStep = null;
+
+function markStep(id, done) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove('active', 'done-step');
+  el.classList.add(done ? 'done-step' : 'active');
+  if (!done) activeStep = id;
+}
+
+function advanceStep(msg) {
+  for (const [keyword, id] of Object.entries(STEPS)) {
+    if (msg.includes(keyword)) {
+      if (activeStep) markStep(activeStep, true);
+      markStep(id, false);
+      break;
+    }
+  }
+}
+
+function appendLog(text, isErr = false) {
+  const line = document.createElement('div');
+  line.className = 'log-line' + (isErr ? ' err' : '');
+  line.textContent = text;
+  logBox.appendChild(line);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+const es = new EventSource(`/stream/${JOB_ID}`);
+es.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  if (msg === 'ping') return;
+
+  if (msg.startsWith('__DONE__')) {
+    es.close();
+    bar.classList.add('done');
+    icon.textContent = '✅';
+    title.textContent = 'Cours généré !';
+    sub.textContent = 'Votre site est prêt.';
+    siteBtn.removeAttribute('disabled');
+    siteBtn.style.pointerEvents = 'auto';
+    if (activeStep) markStep(activeStep, true);
+    return;
+  }
+  if (msg === '__ERROR__') {
+    es.close();
+    bar.classList.add('error');
+    icon.textContent = '❌';
+    title.textContent = 'Erreur';
+    sub.textContent = 'Consultez les logs pour plus de détails.';
+    return;
+  }
+
+  appendLog(msg, msg.includes('❌'));
+  advanceStep(msg);
+
+  // Rough progress estimate
+  if (msg.includes('notebook_id'))        progress = 15;
+  else if (msg.includes('Ajout source'))  progress = 22;
+  else if (msg.includes('artifact_id'))   progress = 35;
+  else if (msg.includes('prêt'))          progress = Math.min(progress + 15, 75);
+  else if (msg.includes('Téléchargement'))progress = 78;
+  else if (msg.includes('pages générées'))progress = 83;
+  else if (msg.includes('Génération du site'))progress = 88;
+  else if (msg.includes('Push Git'))      progress = 95;
+  bar.style.width = progress + '%';
+};
+
+es.onerror = () => {
+  // SSE closed or timed out — poll status instead
+  es.close();
+  poll();
+};
+
+function poll() {
+  fetch(`/status/${JOB_ID}`)
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === 'done') {
+        bar.classList.add('done');
+        icon.textContent = '✅';
+        title.textContent = 'Cours généré !';
+        sub.textContent = 'Votre site est prêt.';
+        siteBtn.removeAttribute('disabled');
+      } else if (d.status === 'error') {
+        bar.classList.add('error');
+        icon.textContent = '❌';
+        title.textContent = 'Erreur';
+        sub.textContent = d.error || 'Erreur inconnue';
+      } else {
+        setTimeout(poll, 5000);
+      }
+    });
+}
+
+function toggleTheme() {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+}
+</script>
+</body>
+</html>
