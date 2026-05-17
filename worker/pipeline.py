@@ -96,7 +96,23 @@ def run(
             _step(job, emit, "notebooklm_source", f"📎 Ajout source : {f.name}")
             notebooklm.add_source(nb_id, f)
 
-        # Lance les générations
+        # ── Infographie — thread parallèle (démarre dès que le PDF est indexé)
+        infographic_path = out_dir / f"{slug}_infographie.png"
+        infographic_ok = [False]
+
+        def _run_infographic() -> None:
+            try:
+                emit("🖼️  Génération infographie NotebookLM…")
+                notebooklm.generate_and_download_infographic(nb_id, infographic_path, emit)
+                infographic_ok[0] = True
+                emit("   ✅ Infographie prête")
+            except Exception as exc:
+                emit(f"   ⚠️  Infographie échouée : {exc}")
+
+        infographic_thread = threading.Thread(target=_run_infographic, daemon=True)
+        infographic_thread.start()
+
+        # Lance les générations slide-deck + audio
         kinds = ["slide-deck"] + ([] if skip_audio else ["audio"])
         artifact_ids: dict[str, str] = {}
         for kind in kinds:
@@ -143,6 +159,12 @@ def run(
             _step(job, emit, "download_audio", "⬇️  Téléchargement audio…")
             notebooklm.download_artifact("audio", nb_id, audio_path)
             assets.podcast_m4a = f"{slug}_podcast.m4a"
+
+        # Attendre la fin de l'infographie (timeout généreux : 11 min)
+        _step(job, emit, "wait_infographic", "⏳ Attente infographie…")
+        infographic_thread.join(timeout=660)
+        if infographic_ok[0]:
+            assets.infographic_png = f"{slug}_infographie.png"
 
     except Exception as e:
         emit(f"⚠️  NotebookLM indisponible : {e}")

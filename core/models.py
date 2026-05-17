@@ -77,6 +77,7 @@ class CourseAssets:
     podcast_m4a: str     = ""   # ex: "energie_elec_podcast.m4a"  — vide si absent
     slides_pdf: str      = ""   # ex: "Presentation/energie_elec_presentation.pdf"
     slide_count: int     = 0    # nombre de pages de présentation
+    infographic_png: str = ""   # ex: "energie_elec_infographie.png" — vide si absent
 
 
 @dataclass
@@ -151,6 +152,7 @@ class CourseModel:
                 podcast_m4a=assets_d.get("podcast_m4a", ""),
                 slides_pdf=assets_d.get("slides_pdf", ""),
                 slide_count=assets_d.get("slide_count", 0),
+                infographic_png=assets_d.get("infographic_png", ""),
             ),
             generated_at=d.get("generated_at", datetime.utcnow().isoformat()),
             source_filename=d.get("source_filename", ""),

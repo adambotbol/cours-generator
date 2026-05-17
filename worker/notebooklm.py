@@ -115,3 +115,47 @@ def download_artifact(kind: str, notebook_id: str, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _run([NOTEBOOKLM_BIN, "download", kind, str(output_path),
           "-n", notebook_id, "--force"])
+
+
+def generate_and_download_infographic(
+    notebook_id: str,
+    output_path: Path,
+    emit=None,
+) -> None:
+    """Génère et télécharge une infographie via la Python API NotebookLM.
+
+    Wrapper synchrone autour de l'API async — peut être appelé depuis n'importe
+    quel thread (crée son propre event loop via asyncio.run()).
+
+    Raises RuntimeError si la génération échoue côté NotebookLM.
+    """
+    import asyncio
+
+    async def _run_async() -> None:
+        from notebooklm import NotebookLMClient  # noqa: PLC0415
+        from notebooklm.types import InfographicDetail, InfographicOrientation  # noqa: PLC0415
+
+        async with await NotebookLMClient.from_storage() as client:
+            status = await client.artifacts.generate_infographic(
+                notebook_id,
+                language="fr",
+                orientation=InfographicOrientation.PORTRAIT,
+                detail_level=InfographicDetail.DETAILED,
+            )
+            if emit:
+                emit(f"   infographie → task_id = {status.task_id[:8]}…")
+
+            final = await client.artifacts.wait_for_completion(
+                notebook_id, status.task_id, timeout=600, poll_interval=10,
+            )
+            if final.is_failed:
+                raise RuntimeError(
+                    f"Infographie NotebookLM échouée : {final.status}"
+                )
+
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            await client.artifacts.download_infographic(
+                notebook_id, str(output_path), artifact_id=status.task_id,
+            )
+
+    asyncio.run(_run_async())
