@@ -105,18 +105,24 @@ def run(
             artifact_ids[kind] = aid
             emit(f"   {kind} → artifact_id = {aid}")
 
-        # Attente en parallèle
+        # Attente en parallèle — on collecte les échecs par kind
         _step(job, emit, "wait_artifacts", "⏳ Attente des artifacts (20-30 min)…")
+        failed_kinds: set[str] = set()
         threads = [
             threading.Thread(
                 target=_wait_one,
-                args=(kind, aid, nb_id, emit),
+                args=(kind, aid, nb_id, emit, failed_kinds),
                 daemon=True,
             )
             for kind, aid in artifact_ids.items()
         ]
         for t in threads: t.start()
         for t in threads: t.join()
+
+        if failed_kinds:
+            raise RuntimeError(
+                f"Artifact(s) NotebookLM échoués : {', '.join(failed_kinds)}"
+            )
 
         # Téléchargements
         slides_dir  = out_dir / "Presentation"
@@ -181,7 +187,13 @@ def _step(job: JobRecord, emit: Emitter, step_name: str, msg: str) -> None:
     emit(msg)
 
 
-def _wait_one(kind: str, art_id: str, nb_id: str, emit: Emitter) -> None:
-    emit(f"   ⌛ Waiting {kind} ({art_id[:8]}…)")
-    notebooklm.wait_artifact(art_id, nb_id)
-    emit(f"   ✅ {kind} prêt")
+def _wait_one(kind: str, art_id: str, nb_id: str, emit: Emitter,
+              failed: set[str]) -> None:
+    """Attend un artifact dans un thread. Stocke les échecs dans `failed`."""
+    try:
+        emit(f"   ⌛ Waiting {kind} ({art_id[:8]}…)")
+        notebooklm.wait_artifact(art_id, nb_id)
+        emit(f"   ✅ {kind} prêt")
+    except Exception as e:
+        emit(f"   ❌ {kind} échoué : {e}")
+        failed.add(kind)
