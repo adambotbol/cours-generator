@@ -1,220 +1,91 @@
 #!/usr/bin/env python3
-"""Interface web pour cours-generator.
+"""Serveur Flask — couche HTTP mince.
 
-Démarre avec : python app.py
-Puis ouvre http://localhost:5000
+Responsabilités de ce fichier :
+  - Valider les entrées HTTP (upload, form data)
+  - Créer et suivre les jobs via storage.base.get_backend()
+  - Lancer worker.pipeline.run() dans un thread daemon
+  - Streamer les logs via SSE
+  - Servir les prévisualisations locales et le CourseModel JSON
+
+Ce fichier NE contient PAS :
+  - de logique de génération (→ worker/pipeline.py)
+  - d'appels directs à NotebookLM ou Gemini (→ worker/)
+  - de push GitHub (supprimé — publication découplée)
+  - d'état in-memory des jobs (→ storage/local.py, SQLite)
 """
 
+from __future__ import annotations
+
 import json
-import os
 import queue
-import subprocess
-import sys
+import re
 import threading
 import uuid
 from pathlib import Path
 
-from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, url_for
+from flask import (
+    Flask, Response, jsonify, redirect, render_template,
+    request, send_from_directory, url_for,
+)
 
-load_dotenv()
+from core.config import OUTPUT_DIR, UPLOAD_DIR, PORT, DEBUG
+from core.models import JobRecord, JobStatus, CourseModel
+from storage.base import get_backend
+import worker.pipeline as pipeline
+
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB
-UPLOAD_DIR = Path("uploads")
-OUTPUT_DIR = Path("output")
-UPLOAD_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
 
-# job_id → {"status": str, "log": [str], "output_dir": str|None, "error": str|None}
-JOBS: dict[str, dict] = {}
-JOB_QUEUES: dict[str, queue.Queue] = {}
-
-# ─── Helpers ──────────────────────────────────────────────────────────────────
-
-NOTEBOOKLM_BIN = str(Path(sys.executable).parent / "notebooklm")
+# SSE queues in-memory (ok : recréées si le serveur redémarre, les jobs SQLite persistent)
+_SSE_QUEUES: dict[str, queue.Queue] = {}
 
 
-def _run(cmd: list[str], capture: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, check=True, text=True, capture_output=capture)
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
-def _emit(q: queue.Queue, msg: str) -> None:
-    print(msg)
-    q.put(msg)
+def _emit_to_job(job_id: str, msg: str) -> None:
+    """Émet un message SSE + met à jour le job en DB."""
+    q = _SSE_QUEUES.get(job_id)
+    if q:
+        q.put(msg)
+    print(f"[{job_id}] {msg}")
 
 
-# ─── Pipeline (runs in background thread) ─────────────────────────────────────
+# ── Background runner ─────────────────────────────────────────────────────────
 
-def run_pipeline(job_id: str, files: list[Path], title: str, matiere: str,
-                 skip_audio: bool) -> None:
-    q = JOB_QUEUES[job_id]
-    job = JOBS[job_id]
-    job["status"] = "running"
+def _run_job(job: JobRecord, source_files: list[Path], skip_audio: bool) -> None:
+    """Exécuté dans un thread daemon.  Met à jour le job SQLite en continu."""
+    store = get_backend()
+
+    def emit(msg: str) -> None:
+        _emit_to_job(job.id, msg)
+        job.step = msg[:120]
+        store.update_job(job)
 
     try:
-        chapter_name = files[0].stem  # use first file name as chapter key
-        out_dir = OUTPUT_DIR / job_id
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        # ── 1. Create notebook ────────────────────────────────────────────────
-        _emit(q, f"📚 Création du notebook « {title} »…")
-        res = _run([NOTEBOOKLM_BIN, "create", title, "--json"])
-        data = json.loads(res.stdout)
-        notebook = data.get("notebook") if isinstance(data, dict) else None
-        nb_id = notebook.get("id") if isinstance(notebook, dict) else None
-        if not nb_id:
-            raise RuntimeError(f"ID notebook introuvable: {data}")
-        _emit(q, f"   notebook_id = {nb_id}")
-
-        # ── 2. Add sources ────────────────────────────────────────────────────
-        for f in files:
-            _emit(q, f"📎 Ajout source : {f.name}")
-            _run([NOTEBOOKLM_BIN, "source", "add", str(f),
-                  "-n", nb_id, "--type", "file"])
-
-        # ── 3. Launch generation ──────────────────────────────────────────────
-        kinds = ["slide-deck"]
-        if not skip_audio:
-            kinds.append("audio")
-
-        artifact_ids: dict[str, str] = {}
-        for kind in kinds:
-            _emit(q, f"🎬 Lancement génération {kind}…")
-            res = _run([NOTEBOOKLM_BIN, "generate", kind,
-                        "-n", nb_id, "--json", "--retry", "3"])
-            d = json.loads(res.stdout)
-            art_id = _extract_artifact_id(d, kind)
-            artifact_ids[kind] = art_id
-            _emit(q, f"   {kind} → artifact_id = {art_id}")
-
-        # ── 4. Wait in parallel ───────────────────────────────────────────────
-        _emit(q, "⏳ Attente des artifacts (peut prendre 20-30 min)…")
-
-        def wait_one(kind: str, art_id: str) -> None:
-            _emit(q, f"   ⌛ Waiting {kind} ({art_id[:8]}…)")
-            _run([NOTEBOOKLM_BIN, "artifact", "wait", art_id,
-                  "-n", nb_id, "--timeout", "3600"], capture=False)
-            _emit(q, f"   ✅ {kind} prêt")
-
-        threads = [
-            threading.Thread(target=wait_one, args=(k, v), daemon=True)
-            for k, v in artifact_ids.items()
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        # ── 5. Download ───────────────────────────────────────────────────────
-        slides_path = out_dir / "Presentation" / f"{chapter_name}_presentation.pdf"
-        slides_path.parent.mkdir(parents=True, exist_ok=True)
-
-        _emit(q, f"⬇️  Téléchargement slide-deck…")
-        _run([NOTEBOOKLM_BIN, "download", "slide-deck", str(slides_path),
-              "-n", nb_id, "--force"])
-
-        audio_path = None
-        if not skip_audio:
-            audio_path = out_dir / f"{chapter_name}_podcast.m4a"
-            _emit(q, f"⬇️  Téléchargement audio…")
-            _run([NOTEBOOKLM_BIN, "download", "audio", str(audio_path),
-                  "-n", nb_id, "--force"])
-
-        # ── 6. Split slides ───────────────────────────────────────────────────
-        _emit(q, "✂️  Découpage des slides par page…")
-        import fitz
-        src = fitz.open(slides_path)
-        n = len(src)
-        for i in range(n):
-            pg = fitz.open()
-            pg.insert_pdf(src, from_page=i, to_page=i)
-            pg.save(slides_path.parent / f"{chapter_name}_presentation_page{i+1}.pdf")
-            pg.close()
-        src.close()
-        _emit(q, f"   {n} pages générées")
-
-        # ── 7. Generate HTML ──────────────────────────────────────────────────
-        _emit(q, "🌐 Génération du site HTML…")
-        pdf_text = _extract_text(files[0])
-        html = _generate_html(pdf_text, chapter_name, title, matiere)
-        index = out_dir / "index.html"
-        index.write_text(html, encoding="utf-8")
-        _emit(q, f"   → {index}")
-
-        # ── 8. Git push ───────────────────────────────────────────────────────
-        _emit(q, "🚀 Push Git…")
-        try:
-            _run(["git", "add", str(out_dir)], capture=False)
-            _run(["git", "commit", "-m", f"Add course: {title}"], capture=False)
-            _run(["git", "push", "origin", "main"], capture=False)
-            _emit(q, "✅ Publié sur GitHub !")
-        except subprocess.CalledProcessError as e:
-            _emit(q, f"⚠️  Git push échoué (code {e.returncode}) — site généré localement.")
-
-        job["status"] = "done"
-        job["output_dir"] = str(out_dir)
-        _emit(q, f"__DONE__:{job_id}")
+        course = pipeline.run(
+            job=job,
+            source_files=source_files,
+            emit=emit,
+            skip_audio=skip_audio,
+        )
+        store.update_job(job)
+        _emit_to_job(job.id, f"__DONE__:{job.preview_url}")
 
     except Exception as exc:
-        job["status"] = "error"
-        job["error"] = str(exc)
-        _emit(q, f"❌ Erreur : {exc}")
-        _emit(q, "__ERROR__")
+        job.status = JobStatus.ERROR
+        job.error  = str(exc)
+        store.update_job(job)
+        emit(f"❌ Erreur : {exc}")
+        _emit_to_job(job.id, "__ERROR__")
 
 
-def _extract_artifact_id(data: dict, kind: str) -> str:
-    if isinstance(data, dict):
-        tid = data.get("task_id")
-        if isinstance(tid, str) and tid:
-            return tid
-        for key in ("artifact", kind, kind.replace("-", "_")):
-            w = data.get(key)
-            if isinstance(w, dict):
-                wid = w.get("id") or w.get("task_id")
-                if isinstance(wid, str) and wid:
-                    return wid
-        top = data.get("id")
-        if isinstance(top, str) and top:
-            return top
-    raise RuntimeError(f"Artifact ID introuvable dans `generate {kind}`: {data}")
-
-
-def _extract_text(pdf_path: Path) -> str:
-    import fitz
-    doc = fitz.open(pdf_path)
-    try:
-        return "\n\n".join(p.get_text() for p in doc)
-    finally:
-        doc.close()
-
-
-def _generate_html(pdf_text: str, chapter_name: str, titre: str, matiere: str) -> str:
-    from google import genai
-    from google.genai import types
-
-    # Import system prompt from cours_generator
-    sys.path.insert(0, str(Path(__file__).parent))
-    from cours_generator import SYSTEM_PROMPT, GEMINI_MODEL, HTML_MAX_TOKENS
-
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY manquante dans .env")
-
-    client = genai.Client(api_key=api_key)
-    user_prompt = f"Titre: {titre} | Matière: {matiere} | Fichier: {chapter_name}\n{pdf_text}"
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=user_prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            max_output_tokens=HTML_MAX_TOKENS,
-        ),
-    )
-    return response.text
-
-
-# ─── Routes ───────────────────────────────────────────────────────────────────
+# ── Routes — UI Flask ─────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -223,21 +94,21 @@ def index():
 
 @app.route("/upload", methods=["POST"])
 def upload():
-    files = request.files.getlist("pdfs")
-    title = request.form.get("title", "").strip()
-    matiere = request.form.get("matiere", "").strip()
+    files      = request.files.getlist("pdfs")
+    title      = request.form.get("title", "").strip()
+    matiere    = request.form.get("matiere", "").strip()
     skip_audio = request.form.get("skip_audio") == "on"
 
     if not files or not files[0].filename:
         return jsonify({"error": "Aucun fichier sélectionné"}), 400
 
     job_id = str(uuid.uuid4())[:8]
-    JOBS[job_id] = {"status": "pending", "log": [], "output_dir": None, "error": None}
-    JOB_QUEUES[job_id] = queue.Queue()
+    slug   = _slugify(title or Path(files[0].filename).stem)
 
-    saved: list[Path] = []
+    # Sauvegarde des uploads
     job_upload_dir = UPLOAD_DIR / job_id
     job_upload_dir.mkdir(parents=True, exist_ok=True)
+    saved: list[Path] = []
     for f in files:
         dest = job_upload_dir / Path(f.filename).name
         f.save(dest)
@@ -246,31 +117,83 @@ def upload():
     if not title:
         title = saved[0].stem
 
-    t = threading.Thread(
-        target=run_pipeline,
-        args=(job_id, saved, title, matiere, skip_audio),
-        daemon=True,
+    # Création du job
+    job = JobRecord(
+        id=job_id, slug=slug, title=title, matiere=matiere,
+        config={"skip_audio": skip_audio},
     )
-    t.start()
+    store = get_backend()
+    store.create_job(job)
+    _SSE_QUEUES[job_id] = queue.Queue()
+
+    # Lancement pipeline en arrière-plan
+    threading.Thread(
+        target=_run_job,
+        args=(job, saved, skip_audio),
+        daemon=True,
+    ).start()
 
     return redirect(url_for("progress", job_id=job_id))
 
 
 @app.route("/progress/<job_id>")
 def progress(job_id: str):
-    if job_id not in JOBS:
+    job = get_backend().get_job(job_id)
+    if job is None:
         return "Job introuvable", 404
     return render_template("progress.html", job_id=job_id)
 
 
+# ── Routes — API JSON ─────────────────────────────────────────────────────────
+
+@app.route("/api/jobs")
+def api_jobs():
+    jobs = get_backend().list_jobs(limit=20)
+    return jsonify([j.to_dict() for j in jobs])
+
+
+@app.route("/api/jobs/<job_id>")
+def api_job(job_id: str):
+    job = get_backend().get_job(job_id)
+    if job is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(job.to_dict())
+
+
+@app.route("/api/jobs/<job_id>/model")
+def api_course_model(job_id: str):
+    """Retourne le CourseModel JSON brut (pour édition future)."""
+    job = get_backend().get_job(job_id)
+    if job is None or not job.course_model_path:
+        return jsonify({"error": "CourseModel non disponible"}), 404
+    model_path = Path(job.course_model_path)
+    if not model_path.exists():
+        return jsonify({"error": "Fichier introuvable"}), 404
+    return Response(
+        model_path.read_text(encoding="utf-8"),
+        mimetype="application/json",
+    )
+
+
+# ── SSE stream ────────────────────────────────────────────────────────────────
+
 @app.route("/stream/<job_id>")
 def stream(job_id: str):
-    """SSE endpoint — streams log lines to the browser."""
-    if job_id not in JOB_QUEUES:
+    if job_id not in _SSE_QUEUES:
+        # Le job existe peut-être en DB (redémarrage) mais la queue est perdue
+        job = get_backend().get_job(job_id)
+        if job and job.status == JobStatus.DONE:
+            def already_done():
+                yield f"data: {json.dumps('__DONE__:' + job.preview_url)}\n\n"
+            return Response(already_done(), mimetype="text/event-stream")
+        if job and job.status == JobStatus.ERROR:
+            def already_error():
+                yield f"data: {json.dumps('__ERROR__')}\n\n"
+            return Response(already_error(), mimetype="text/event-stream")
         return "Job introuvable", 404
 
-    def event_generator():
-        q = JOB_QUEUES[job_id]
+    def gen():
+        q = _SSE_QUEUES[job_id]
         while True:
             try:
                 msg = q.get(timeout=60)
@@ -278,30 +201,51 @@ def stream(job_id: str):
                 if msg.startswith("__DONE__") or msg == "__ERROR__":
                     break
             except queue.Empty:
-                yield "data: ping\n\n"
+                yield "data: \"ping\"\n\n"
 
-    return Response(event_generator(), mimetype="text/event-stream",
+    return Response(gen(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-@app.route("/status/<job_id>")
-def status(job_id: str):
-    job = JOBS.get(job_id)
-    if not job:
-        return jsonify({"error": "not found"}), 404
-    return jsonify(job)
+# ── Preview locale ────────────────────────────────────────────────────────────
 
-
-@app.route("/site/<job_id>/")
-@app.route("/site/<job_id>/<path:filename>")
-def serve_site(job_id: str, filename: str = "index.html"):
-    job = JOBS.get(job_id)
-    if not job or not job.get("output_dir"):
+@app.route("/preview/<job_id>/")
+@app.route("/preview/<job_id>/<path:filename>")
+def preview(job_id: str, filename: str = "index.html"):
+    """Sert le site généré en local (avant publication éventuelle)."""
+    job = get_backend().get_job(job_id)
+    if not job or not job.output_dir:
         return "Site non encore prêt", 404
-    return send_from_directory(job["output_dir"], filename)
+    return send_from_directory(job.output_dir, filename)
 
+
+# ── Re-render à la demande ────────────────────────────────────────────────────
+
+@app.route("/api/jobs/<job_id>/rerender", methods=["POST"])
+def rerender(job_id: str):
+    """Re-génère le HTML depuis le CourseModel JSON sans ré-appeler le LLM.
+
+    Utile après modification manuelle du JSON.
+    """
+    job = get_backend().get_job(job_id)
+    if not job or not job.course_model_path:
+        return jsonify({"error": "CourseModel non disponible"}), 404
+
+    model_path = Path(job.course_model_path)
+    if not model_path.exists():
+        return jsonify({"error": "Fichier JSON introuvable"}), 404
+
+    try:
+        course = CourseModel.from_json(model_path.read_text(encoding="utf-8"))
+        from worker.renderer import render_course
+        render_course(course, Path(job.output_dir) / "index.html")
+        return jsonify({"ok": True, "preview_url": job.preview_url})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Entrée ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    print(f"🚀  http://localhost:{port}")
-    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
+    print(f"🚀  http://localhost:{PORT}")
+    app.run(host="0.0.0.0", port=PORT, debug=DEBUG, threaded=True)

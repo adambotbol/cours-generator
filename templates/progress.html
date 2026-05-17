@@ -131,8 +131,8 @@
     <div class="step" id="s-generate"><span class="step-icon">🎬</span> Lancement de la génération</div>
     <div class="step" id="s-wait"><span class="step-icon">⏳</span> Attente des artifacts (20-30 min)</div>
     <div class="step" id="s-download"><span class="step-icon">⬇️</span> Téléchargement</div>
-    <div class="step" id="s-html"><span class="step-icon">🌐</span> Génération du site HTML</div>
-    <div class="step" id="s-git"><span class="step-icon">🚀</span> Publication GitHub</div>
+    <div class="step" id="s-structure"><span class="step-icon">🧠</span> Structuration LLM</div>
+    <div class="step" id="s-html"><span class="step-icon">🌐</span> Rendu HTML</div>
   </div>
 
   <details>
@@ -141,7 +141,7 @@
   </details>
 
   <div class="actions">
-    <a href="/site/{{ job_id }}/" class="btn btn-primary" id="siteBtn" disabled>🌐&nbsp; Voir le site</a>
+    <a href="#" class="btn btn-primary" id="siteBtn" disabled>🌐&nbsp; Voir le cours</a>
     <a href="/" class="btn btn-secondary">← Nouveau cours</a>
   </div>
 </div>
@@ -161,8 +161,8 @@ const STEPS = {
   'Lancement génération': 's-generate',
   'Attente': 's-wait',
   'Téléchargement': 's-download',
-  'Génération du site': 's-html',
-  'Push Git': 's-git',
+  'Structuration': 's-structure',
+  'Rendu HTML': 's-html',
 };
 let progress = 5;
 let activeStep = null;
@@ -202,8 +202,10 @@ es.onmessage = (e) => {
     es.close();
     bar.classList.add('done');
     icon.textContent = '✅';
-    title.textContent = 'Cours généré !';
-    sub.textContent = 'Votre site est prêt.';
+    title.textContent = 'Cours prêt !';
+    const previewUrl = msg.split('__DONE__:')[1] || `/preview/${JOB_ID}/`;
+    sub.textContent = 'Prévisualisation disponible ci-dessous.';
+    siteBtn.href = previewUrl;
     siteBtn.removeAttribute('disabled');
     siteBtn.style.pointerEvents = 'auto';
     if (activeStep) markStep(activeStep, true);
@@ -222,14 +224,14 @@ es.onmessage = (e) => {
   advanceStep(msg);
 
   // Rough progress estimate
-  if (msg.includes('notebook_id'))        progress = 15;
-  else if (msg.includes('Ajout source'))  progress = 22;
-  else if (msg.includes('artifact_id'))   progress = 35;
-  else if (msg.includes('prêt'))          progress = Math.min(progress + 15, 75);
-  else if (msg.includes('Téléchargement'))progress = 78;
-  else if (msg.includes('pages générées'))progress = 83;
-  else if (msg.includes('Génération du site'))progress = 88;
-  else if (msg.includes('Push Git'))      progress = 95;
+  if (msg.includes('notebook_id'))         progress = 15;
+  else if (msg.includes('Ajout source'))   progress = 22;
+  else if (msg.includes('artifact_id'))    progress = 35;
+  else if (msg.includes('prêt'))           progress = Math.min(progress + 15, 75);
+  else if (msg.includes('Téléchargement')) progress = 78;
+  else if (msg.includes('pages générées')) progress = 83;
+  else if (msg.includes('Structuration'))  progress = 87;
+  else if (msg.includes('Rendu HTML'))     progress = 95;
   bar.style.width = progress + '%';
 };
 
@@ -240,14 +242,15 @@ es.onerror = () => {
 };
 
 function poll() {
-  fetch(`/status/${JOB_ID}`)
+  fetch(`/api/jobs/${JOB_ID}`)
     .then(r => r.json())
     .then(d => {
       if (d.status === 'done') {
         bar.classList.add('done');
         icon.textContent = '✅';
-        title.textContent = 'Cours généré !';
-        sub.textContent = 'Votre site est prêt.';
+        title.textContent = 'Cours prêt !';
+        sub.textContent = 'Prévisualisation disponible ci-dessous.';
+        siteBtn.href = d.preview_url || `/preview/${JOB_ID}/`;
         siteBtn.removeAttribute('disabled');
       } else if (d.status === 'error') {
         bar.classList.add('error');

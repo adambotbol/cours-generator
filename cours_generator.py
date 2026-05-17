@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Génère un site de cours depuis un PDF via NotebookLM + Gemini."""
+"""CLI legacy — génère un site de cours depuis un PDF via NotebookLM + Gemini.
+
+DÉPRÉCIÉ : ce script monolithique est conservé pour compatibilité CLI.
+Pour la nouvelle architecture, utiliser app.py (interface web) ou
+appeler worker.pipeline.run() directement.
+
+Changements par rapport au prototype :
+- git_push() supprimée (publication découplée)
+- generate_html() délèguera au renderer Jinja2 dans une prochaine version
+"""
 
 import argparse
 import json
@@ -326,10 +335,14 @@ def build_site(
 
 
 def git_push(output_dir: Path, title: str) -> None:
-    print("🚀 Push Git...")
-    run(["git", "add", str(output_dir)])
-    run(["git", "commit", "-m", f"Add course site: {title}"])
-    run(["git", "push", "origin", "main"])
+    """SUPPRIMÉ — la publication est découplée de la génération.
+
+    Utiliser /api/jobs/<id>/publish (à venir) ou publier manuellement.
+    """
+    raise RuntimeError(
+        "git_push() a été supprimée. La publication est découplée de la génération.\n"
+        "Utilisez --skip-push ou l'interface web."
+    )
 
 
 def main() -> int:
@@ -408,10 +421,9 @@ def main() -> int:
 
     build_site(args.output_dir, args.pdf, chapter_name, title, args.matiere)
 
-    if args.skip_push:
-        print("⏭️  Git push sauté.")
-    else:
-        git_push(args.output_dir, title)
+    if not args.skip_push:
+        print("ℹ️  Publication découplée — aucun push automatique.")
+        print("   Utilisez l'interface web (/preview/<id>/) ou publiez manuellement.")
 
     print("✨ Terminé.")
     return 0

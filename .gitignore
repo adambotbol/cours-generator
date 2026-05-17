@@ -6,8 +6,12 @@ __pycache__/
 .venv/
 venv/
 
-# Médias générés localement — gros fichiers, pas dans le repo
-output/**/*.pdf
-output/**/*.m4a
-output/**/*.mp4
-output/Presentation/
+# Médias générés et artefacts locaux — pas dans le repo
+output/
+uploads/
+jobs.db
+*.pdf
+*.m4a
+*.mp4
+courses.json
+index.html

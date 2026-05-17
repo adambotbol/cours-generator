@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ course.title }}</title>
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [['\\(','\\)']], displayMath: [['$$','$$']] },
+    startup: { typeset: false }
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+<style>
+/* ── Variables ──────────────────────────────────────────────────────────── */
+:root {
+  --bg: #f5f5f7;
+  --card: rgba(255,255,255,0.82);
+  --card-border: rgba(255,255,255,0.50);
+  --border: rgba(0,0,0,0.08);
+  --text: #1d1d1f;
+  --muted: #6e6e73;
+  --accent: #0071e3;
+  --green: #30d158;
+  --purple: #af52de;
+  --orange: #ff9500;
+  --red: #ff3b30;
+  --radius: 20px;
+  --shadow: 0 20px 50px rgba(0,0,0,0.09);
+  --nav-h: 58px;
+  --bar-h: 50px;
+}
+[data-theme="dark"] {
+  --bg: #000; --card: rgba(28,28,30,0.88); --card-border: rgba(255,255,255,0.10);
+  --border: rgba(255,255,255,0.10); --text: #f5f5f7; --muted: #98989d;
+}
+
+/* ── Reset ──────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+       background: var(--bg); color: var(--text); min-height: 100vh; }
+
+/* ── Scroll progress bar ────────────────────────────────────────────────── */
+#progress {
+  position: fixed; top: 0; left: 0; z-index: 9999;
+  height: 3px; width: 0%; background: var(--accent);
+  transition: width 0.1s;
+}
+
+/* ── Animated blobs ─────────────────────────────────────────────────────── */
+.blobs { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.blob { position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.28;
+        animation: drift 20s ease-in-out infinite alternate; }
+.blob-1 { width: 600px; height: 600px; background: #5e5ce6; top:-200px; left:-100px; }
+.blob-2 { width: 500px; height: 500px; background: #30d158; bottom:-150px; right:-80px; animation-delay:-10s; }
+@keyframes drift { from{transform:translate(0,0)} to{transform:translate(60px,40px)} }
+
+/* ── Navigation ─────────────────────────────────────────────────────────── */
+nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+  height: var(--nav-h);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 28px;
+  background: rgba(255,255,255,0.72);
+  backdrop-filter: blur(30px) saturate(180%);
+  border-bottom: 1px solid var(--border);
+}
+[data-theme="dark"] nav { background: rgba(18,18,20,0.75); }
+.nav-logo { font-weight: 800; font-size: .95rem; letter-spacing: -.02em;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+.nav-controls { display: flex; align-items: center; gap: 8px; }
+#searchInput {
+  background: rgba(0,0,0,0.05); border: 1px solid var(--border); border-radius: 10px;
+  padding: 6px 12px; font-size: .82rem; color: var(--text); outline: none; width: 160px;
+  transition: border-color .2s, width .3s;
+}
+[data-theme="dark"] #searchInput { background: rgba(255,255,255,0.08); }
+#searchInput:focus { border-color: var(--accent); width: 220px; }
+.btn-icon {
+  background: none; border: 1px solid var(--border); border-radius: 50%;
+  width: 32px; height: 32px; cursor: pointer; font-size: 14px; color: var(--text);
+  display: flex; align-items: center; justify-content: center; transition: background .2s;
+}
+.btn-icon:hover { background: rgba(0,0,0,0.06); }
+
+/* ── Quick access bar ───────────────────────────────────────────────────── */
+.quick-bar {
+  position: fixed; top: var(--nav-h); left: 0; right: 0; z-index: 190;
+  height: var(--bar-h);
+  display: flex; align-items: center; gap: 8px; padding: 0 20px;
+  background: rgba(248,248,250,0.80);
+  backdrop-filter: blur(20px) saturate(160%);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+[data-theme="dark"] .quick-bar { background: rgba(22,22,24,0.80); }
+.qa-btn {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px;
+  background: var(--card); border: 1px solid var(--card-border);
+  border-radius: 12px; padding: 7px 14px; font-size: .8rem; font-weight: 600;
+  cursor: pointer; color: var(--text); text-decoration: none;
+  backdrop-filter: blur(12px); transition: transform .15s, box-shadow .15s;
+}
+.qa-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.09); }
+
+/* ── Main content ───────────────────────────────────────────────────────── */
+main {
+  position: relative; z-index: 1;
+  padding: calc(var(--nav-h) + var(--bar-h) + 20px) 20px 60px;
+  max-width: 1100px; margin: 0 auto;
+}
+
+/* ── Hero ───────────────────────────────────────────────────────────────── */
+.hero {
+  text-align: center; padding: 40px 20px 48px;
+}
+.hero h1 { font-size: clamp(2rem, 5vw, 3.2rem); font-weight: 800; letter-spacing: -.05em; margin-bottom: 8px; }
+.hero .sub { font-size: 1rem; color: var(--muted); }
+
+/* ── Dashboard grid ─────────────────────────────────────────────────────── */
+#mainDashboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 40px;
+}
+.tile {
+  background: var(--card); border: 1px solid var(--card-border);
+  border-radius: 18px; padding: 22px 20px;
+  box-shadow: var(--shadow); backdrop-filter: blur(20px);
+  cursor: pointer; transition: transform .2s, box-shadow .2s;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.tile:hover { transform: translateY(-4px); box-shadow: 0 28px 56px rgba(0,0,0,0.12); }
+.tile-icon  { font-size: 1.6rem; }
+.tile-title { font-size: .9rem; font-weight: 700; letter-spacing: -.01em; }
+.tile-sub   { font-size: .75rem; color: var(--muted); }
+.tile[hidden] { display: none; }
+
+/* ── Content pages ──────────────────────────────────────────────────────── */
+.page {
+  display: none;
+  background: var(--card); border: 1px solid var(--card-border);
+  border-radius: var(--radius); padding: 36px 36px 48px;
+  box-shadow: var(--shadow); backdrop-filter: blur(24px);
+}
+.page.active { display: block; animation: fadeIn .25s ease; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:none} }
+.page-back {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: 1px solid var(--border); border-radius: 10px;
+  padding: 7px 14px; font-size: .82rem; font-weight: 600; cursor: pointer;
+  color: var(--text); margin-bottom: 24px; transition: background .2s;
+}
+.page-back:hover { background: rgba(0,0,0,0.05); }
+.page h1 { font-size: 1.6rem; font-weight: 800; letter-spacing: -.03em; margin-bottom: 20px; }
+
+/* ── Semantic coloring ──────────────────────────────────────────────────── */
+.c-def    { color: var(--accent); font-weight: 600; }
+.c-var    { color: var(--purple); font-weight: 600; }
+.c-unit   { color: var(--green);  font-weight: 600; }
+.c-trap   { color: var(--orange); font-weight: 600; }
+.c-danger { color: var(--red);    font-weight: 600; }
+
+/* ── Key terms ──────────────────────────────────────────────────────────── */
+.terms { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
+.term-badge {
+  padding: 6px 14px; border-radius: 20px; font-size: .78rem; font-weight: 600;
+  border: 1.5px solid currentColor; opacity: 0.9;
+}
+.term-badge.c-def    { background: rgba(0,113,227,.08); }
+.term-badge.c-var    { background: rgba(175,82,222,.08); }
+.term-badge.c-unit   { background: rgba(48,209,88,.08); }
+.term-badge.c-trap   { background: rgba(255,149,0,.08); }
+.term-badge.c-danger { background: rgba(255,59,48,.08); }
+
+/* ── Section content text ───────────────────────────────────────────────── */
+.section-content { font-size: .95rem; line-height: 1.75; color: var(--text); white-space: pre-wrap; margin: 16px 0; }
+
+/* ── Formulas ───────────────────────────────────────────────────────────── */
+.formulas { margin: 24px 0; display: flex; flex-direction: column; gap: 12px; }
+.formula-card {
+  background: rgba(0,113,227,.06); border: 1px solid rgba(0,113,227,.18);
+  border-radius: 14px; padding: 16px 20px;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+[data-theme="dark"] .formula-card { background: rgba(0,113,227,.12); }
+.formula-math { font-size: 1.1rem; }
+.formula-label { font-size: .78rem; color: var(--muted); text-align: right; max-width: 180px; }
+.revision-mode .formula-math { filter: blur(8px); cursor: pointer; transition: filter .2s; }
+.revision-mode .formula-math:hover { filter: none; }
+
+/* ── PDF Viewer ─────────────────────────────────────────────────────────── */
+.viewer-controls {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.viewer-btn {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 7px 16px; cursor: pointer; font-size: .85rem; color: var(--text);
+  transition: background .2s;
+}
+.viewer-btn:hover { background: rgba(0,0,0,0.06); }
+#viewerFrame { width: 100%; height: 70vh; border: none; border-radius: 14px; }
+
+/* ── Audio ──────────────────────────────────────────────────────────────── */
+audio { width: 100%; border-radius: 12px; margin-top: 16px; }
+.audio-cover {
+  background: linear-gradient(135deg, #5e5ce6, #30d158);
+  border-radius: 20px; height: 180px; display: flex; align-items: center;
+  justify-content: center; font-size: 4rem; margin-bottom: 20px;
+}
+
+/* ── Quiz ───────────────────────────────────────────────────────────────── */
+.quiz-card-wrap { perspective: 1000px; height: 180px; margin-bottom: 20px; }
+.quiz-card {
+  width: 100%; height: 100%; position: relative;
+  transform-style: preserve-3d; transition: transform .5s;
+  cursor: pointer;
+}
+.quiz-card.flipped { transform: rotateY(180deg); }
+.quiz-face, .quiz-back {
+  position: absolute; inset: 0; backface-visibility: hidden; border-radius: 18px;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  font-size: 1rem; text-align: center; background: var(--card);
+  border: 1px solid var(--card-border); box-shadow: var(--shadow);
+}
+.quiz-back  { transform: rotateY(180deg); background: rgba(48,209,88,.1); color: var(--green); font-weight: 600; }
+.quiz-nav   { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+.quiz-count { font-size: .82rem; color: var(--muted); flex: 1; text-align: center; }
+.btn-primary {
+  background: var(--accent); color: #fff; border: none; border-radius: 12px;
+  padding: 10px 22px; font-size: .9rem; font-weight: 600; cursor: pointer; transition: opacity .2s;
+}
+.btn-primary:hover { opacity: .88; }
+
+@media (max-width: 600px) {
+  .page { padding: 24px 18px 36px; }
+  #mainDashboard { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  nav { padding: 0 16px; }
+  #searchInput { width: 120px; }
+}
+</style>
+</head>
+<body>
+
+<div id="progress"></div>
+
+<div class="blobs">
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+</div>
+
+<!-- Navigation -->
+<nav>
+  <div class="nav-logo">{{ course.title }}</div>
+  <div class="nav-controls">
+    <input type="search" id="searchInput" placeholder="Rechercher…" oninput="filterTiles(this.value)">
+    <button class="btn-icon" onclick="toggleTheme()" title="Thème sombre">🌙</button>
+    <button class="btn-icon" id="revBtn" onclick="toggleRevisionMode()" title="Mode révision">📝</button>
+  </div>
+</nav>
+
+<!-- Quick Access Bar -->
+<div class="quick-bar">
+  {% if course.assets.source_pdf %}
+  <button class="qa-btn" onclick="openPage('p-viewer-cours')">📄 Cours PDF</button>
+  {% endif %}
+  {% if course.assets.slide_count > 0 %}
+  <button class="qa-btn" onclick="openPage('p-viewer-slides')">📊 Présentation</button>
+  {% endif %}
+  {% if course.assets.podcast_m4a %}
+  <button class="qa-btn" onclick="openPage('p-audio')">🎧 Podcast</button>
+  {% endif %}
+  <button class="qa-btn" onclick="openPage('p-quiz')">🧠 Quiz</button>
+</div>
+
+<main>
+  <!-- Hero -->
+  <section class="hero">
+    <h1>{{ course.title }}</h1>
+    <p class="sub">{{ course.matiere }}</p>
+  </section>
+
+  <!-- Dashboard — tiles de navigation -->
+  <div id="mainDashboard">
+    {% for section in course.sections %}
+    <div class="tile" onclick="openPage('{{ section.id }}')" data-title="{{ section.title }}">
+      <div class="tile-icon">{{ ['⚡','🔬','🧪','📐','🌍','🔭','💡','🧲','📡','🧬'][loop.index0 % 10] }}</div>
+      <div class="tile-title">{{ section.title }}</div>
+      <div class="tile-sub">{{ section.formulas|length }} formule{% if section.formulas|length != 1 %}s{% endif %} · {{ section.key_terms|length }} terme{% if section.key_terms|length != 1 %}s{% endif %}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- ── Section pages ───────────────────────────────────────────────────── -->
+  {% for section in course.sections %}
+  <div class="page" id="{{ section.id }}">
+    <button class="page-back" onclick="closePage()">← Retour</button>
+    <h1>{{ section.title }}</h1>
+
+    {% if section.key_terms %}
+    <div class="terms">
+      {% for kt in section.key_terms %}
+      <span class="term-badge c-{{ kt.term_type.value }}" title="{{ kt.definition }}">{{ kt.term }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="section-content">{{ section.content }}</div>
+
+    {% if section.formulas %}
+    <div class="formulas">
+      {% for f in section.formulas %}
+      <div class="formula-card">
+        <span class="formula-math c-{{ f.term_type.value }}">\( {{ f.latex }} \)</span>
+        <span class="formula-label">{{ f.label }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <!-- ── Viewer — cours PDF ──────────────────────────────────────────────── -->
+  {% if course.assets.source_pdf %}
+  <div class="page" id="p-viewer-cours">
+    <button class="page-back" onclick="closePage()">← Retour</button>
+    <h1>📄 Support de cours</h1>
+    <iframe id="viewerFrameCours" class-="viewerFrame"
+            src="{{ course.assets.source_pdf }}"
+            title="Cours PDF"></iframe>
+  </div>
+  {% endif %}
+
+  <!-- ── Viewer — slides ─────────────────────────────────────────────────── -->
+  {% if course.assets.slide_count > 0 %}
+  <div class="page" id="p-viewer-slides">
+    <button class="page-back" onclick="closePage()">← Retour</button>
+    <h1>📊 Présentation</h1>
+    <div class="viewer-controls">
+      <button class="viewer-btn" onclick="changePage(-1)">←</button>
+      <span id="slidePageLabel">1 / {{ course.assets.slide_count }}</span>
+      <button class="viewer-btn" onclick="changePage(1)">→</button>
+    </div>
+    <iframe id="viewerFrameSlides" title="Slide"></iframe>
+  </div>
+  {% endif %}
+
+  <!-- ── Audio ───────────────────────────────────────────────────────────── -->
+  {% if course.assets.podcast_m4a %}
+  <div class="page" id="p-audio">
+    <button class="page-back" onclick="closePage()">← Retour</button>
+    <h1>🎧 Podcast</h1>
+    <div class="audio-cover">🎧</div>
+    <audio id="audioPlayer" controls>
+      <source src="{{ course.assets.podcast_m4a }}" type="audio/mp4">
+      Votre navigateur ne supporte pas l'audio HTML5.
+    </audio>
+  </div>
+  {% endif %}
+
+  <!-- ── Quiz ────────────────────────────────────────────────────────────── -->
+  <div class="page" id="p-quiz">
+    <button class="page-back" onclick="closePage()">← Retour</button>
+    <h1>🧠 Quiz</h1>
+    <div class="quiz-card-wrap">
+      <div class="quiz-card" id="quizCard" onclick="flipCard()">
+        <div class="quiz-face" id="quizQ"></div>
+        <div class="quiz-back" id="quizA"></div>
+      </div>
+    </div>
+    <div class="quiz-nav">
+      <button class="btn-primary" onclick="prevQuestion()">←</button>
+      <span class="quiz-count" id="quizCount"></span>
+      <button class="btn-primary" onclick="nextQuestion()">→</button>
+    </div>
+  </div>
+</main>
+
+<script>
+// ── Quiz data ──────────────────────────────────────────────────────────────
+const QUIZ = [
+  {% for q in course.quiz %}
+  { q: {{ q.question | tojson }}, a: {{ q.answer | tojson }} }{% if not loop.last %},{% endif %}
+  {% endfor %}
+];
+
+// ── Slides ─────────────────────────────────────────────────────────────────
+const SLIDE_COUNT = {{ course.assets.slide_count }};
+const SLUG = {{ course.slug | tojson }};
+let currentSlide = 1;
+
+function initSlides() {
+  if (!SLIDE_COUNT) return;
+  setSlide(1);
+}
+function setSlide(n) {
+  currentSlide = Math.max(1, Math.min(n, SLIDE_COUNT));
+  const src = `Presentation/${SLUG}_presentation_page${currentSlide}.pdf`;
+  document.getElementById('viewerFrameSlides').src = src;
+  document.getElementById('slidePageLabel').textContent = `${currentSlide} / ${SLIDE_COUNT}`;
+}
+function changePage(delta) { setSlide(currentSlide + delta); }
+
+// ── Page navigation ────────────────────────────────────────────────────────
+let activePage = null;
+
+function openPage(id) {
+  document.getElementById('mainDashboard').style.display = 'none';
+  document.querySelector('.hero').style.display = 'none';
+  if (activePage) activePage.classList.remove('active');
+  activePage = document.getElementById(id);
+  if (activePage) {
+    activePage.classList.add('active');
+    if (id === 'p-quiz') initQuiz();
+    if (id === 'p-viewer-slides') initSlides();
+    if (typeof MathJax !== 'undefined') MathJax.typeset();
+  }
+}
+
+function closePage() {
+  // Pause media
+  const audio = document.getElementById('audioPlayer');
+  if (audio) audio.pause();
+  if (activePage) activePage.classList.remove('active');
+  activePage = null;
+  document.getElementById('mainDashboard').style.display = '';
+  document.querySelector('.hero').style.display = '';
+}
+
+// ── Quiz ───────────────────────────────────────────────────────────────────
+let quizIdx = 0;
+
+function initQuiz() {
+  quizIdx = 0;
+  showQuestion();
+}
+function showQuestion() {
+  if (!QUIZ.length) return;
+  const card = document.getElementById('quizCard');
+  card.classList.remove('flipped');
+  document.getElementById('quizQ').textContent = QUIZ[quizIdx].q;
+  document.getElementById('quizA').textContent = QUIZ[quizIdx].a;
+  document.getElementById('quizCount').textContent = `${quizIdx + 1} / ${QUIZ.length}`;
+}
+function flipCard() { document.getElementById('quizCard').classList.toggle('flipped'); }
+function nextQuestion() { quizIdx = (quizIdx + 1) % QUIZ.length; showQuestion(); }
+function prevQuestion() { quizIdx = (quizIdx - 1 + QUIZ.length) % QUIZ.length; showQuestion(); }
+
+// ── Theme ──────────────────────────────────────────────────────────────────
+function toggleTheme() {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+  localStorage.setItem('cg-theme', dark ? 'light' : 'dark');
+}
+if (localStorage.getItem('cg-theme') === 'dark')
+  document.documentElement.dataset.theme = 'dark';
+
+// ── Revision mode ──────────────────────────────────────────────────────────
+function toggleRevisionMode() {
+  document.body.classList.toggle('revision-mode');
+}
+
+// ── Tile search ────────────────────────────────────────────────────────────
+function filterTiles(q) {
+  const lq = q.toLowerCase();
+  document.querySelectorAll('.tile').forEach(t => {
+    const match = t.dataset.title.toLowerCase().includes(lq);
+    t.toggleAttribute('hidden', !match);
+  });
+}
+
+// ── Scroll progress ────────────────────────────────────────────────────────
+window.addEventListener('scroll', () => {
+  const s = document.documentElement;
+  const pct = (s.scrollTop / (s.scrollHeight - s.clientHeight)) * 100;
+  document.getElementById('progress').style.width = pct + '%';
+});
+</script>
+</body>
+</html>
