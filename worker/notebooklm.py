@@ -81,10 +81,33 @@ def generate_artifact(kind: str, notebook_id: str) -> str:
 
 
 def wait_artifact(artifact_id: str, notebook_id: str, timeout: int = 3600) -> None:
-    """Bloque jusqu'à ce que l'artifact soit prêt (timeout en secondes)."""
-    _run([NOTEBOOKLM_BIN, "artifact", "wait", artifact_id,
-          "-n", notebook_id, "--timeout", str(timeout)],
-         capture=False)
+    """Bloque jusqu'à ce que l'artifact soit prêt (timeout en secondes).
+
+    Note : notebooklm-py retourne parfois exit code 0 même quand le statut
+    est 'failed'.  On capture le stdout pour détecter ce cas et lever une
+    exception explicite (le pipeline passera alors en mode dégradé).
+    """
+    result = subprocess.run(
+        [NOTEBOOKLM_BIN, "artifact", "wait", artifact_id,
+         "-n", notebook_id, "--timeout", str(timeout)],
+        text=True, capture_output=True,
+    )
+    # Affiche la sortie pour la visibilité dans les logs
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="")
+
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, result.args, result.stdout, result.stderr
+        )
+    # Le CLI peut retourner exit 0 avec "Status: failed" dans le stdout
+    combined = (result.stdout + result.stderr).lower()
+    if "status: failed" in combined or "status:failed" in combined:
+        raise RuntimeError(
+            f"NotebookLM : génération de l'artifact échouée ({artifact_id[:8]}…)"
+        )
 
 
 def download_artifact(kind: str, notebook_id: str, output_path: Path) -> None:
